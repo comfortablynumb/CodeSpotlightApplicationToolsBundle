@@ -1,0 +1,33 @@
+parameters:
+    # Application Control
+    code_spotlight_application_tools.application.control.class: CodeSpotlight\Bundle\ApplicationToolsBundle\Application\Control\ApplicationControl
+    code_spotlight_application_tools.application.control.request.listener.class: CodeSpotlight\Bundle\ApplicationToolsBundle\Application\Control\Listener\ApplicationControlListener
+
+    # Application Requirements
+    code_spotlight_application_tools.application.requirements_checker.class: CodeSpotlight\Bundle\ApplicationToolsBundle\Application\RequirementsChecker\CheckRunner\CheckRunner
+    code_spotlight_application_tools.application.event_dispatcher.class: Symfony\Component\EventDispatcher\EventDispatcher
+
+    # Service
+    code_spotlight_application_tools.service.base.class: CodeSpotlight\Bundle\ApplicationToolsBundle\Service\AbstractService
+services:
+    code_spotlight_application_tools.application.event_dispatcher:
+        class: %code_spotlight_application_tools.application.event_dispatcher.class%
+
+    code_spotlight_application_tools.application.control:
+        class: %code_spotlight_application_tools.application.control.class%
+        arguments: [@event_dispatcher, %kernel.root_dir%, %kernel.environment%]
+
+    code_spotlight_application_tools.application.control.request.listener:
+        class: %code_spotlight_application_tools.application.control.request.listener.class%
+        tag: {name: kernel.event_listener, event: kernel.request, method: onKernelRequest, priority: 256}
+        arguments: [@code_spotlight_application_tools.application.control, @templating]
+
+    code_spotlight_application_tools.application.requirements_checker:
+        class: %code_spotlight_application_tools.application.requirements_checker.class%
+        arguments: [@code_spotlight_application_tools.application.event_dispatcher]
+
+    # Service
+    code_spotlight_application_tools.service.base:
+        abstract: true
+        class: %code_spotlight_application_tools.service.base.class%
+        arguments: [@form.factory]
