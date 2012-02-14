@@ -24,3 +24,31 @@ Which ones are planned?
 -----------------------
 
 There's a lot of things I want to add here. And advices and ideas are welcome.
+
+Installation
+------------
+
+Clone the bundle: ::
+
+    git clone git://github.com/comfortablynumb/CodeSpotlightApplicationToolsBundle.git vendor/bundles/CodeSpotlight/Bundle/ApplicationToolsBund$
+
+Then modify your autoload.php: ::
+
+    // autoload.php
+    $loader->registerNamespaces(array(
+        // Rest of vendors..
+
+        'CodeSpotlight' => __DIR__.'/../vendor/bundles'
+    ));
+
+Register the bundle in your AppKernel.php: ::
+
+    // AppKernel.php
+    public function registerBundles()
+    {
+        $bundles = array(
+            // Rest of bundles..
+            new CodeSpotlight\Bundle\ApplicationToolsBundle\CodeSpotlightApplicationToolsBundle()
+        );
+    }
+
