@@ -209,7 +209,7 @@ abstract class AbstractService
 
     public function createObjectFormType($data = null, array $options = array())
     {
-        $class = $this->getObjectFormType();
+        $class = $this->getObjectFormTypeClass();
 
         return $this->formFactory->create(new $class, $data, $options);
     }
@@ -226,5 +226,5 @@ abstract class AbstractService
 
     abstract function getObjectManager();
     abstract function getObjectClass();
-    abstract function getObjectFormType();
+    abstract function getObjectFormTypeClass();
 }

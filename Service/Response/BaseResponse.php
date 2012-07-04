@@ -7,8 +7,9 @@
 namespace CodeSpotlight\Bundle\ApplicationToolsBundle\Service\Response;
 
 use Symfony\Component\Form\Form;
+use Symfony\Component\HttpFoundation\Response;
 
-class BaseResponse 
+class BaseResponse extends Response
 {
     const TYPE_SUCCESS = 'SUCCESS';
     const TYPE_WARNING = 'WARNING';
@@ -30,7 +31,17 @@ class BaseResponse
 
     public function isSuccess()
     {
-        return $this->isSuccess;
+        return $this->type === self::TYPE_SUCCESS;
+    }
+
+    public function isWarning()
+    {
+        return $this->type === self::TYPE_WARNING;
+    }
+
+    public function isError()
+    {
+        return $this->type === self::TYPE_ERROR;
     }
 
     public function setMsg($msg)
@@ -57,20 +68,47 @@ class BaseResponse
         return $this->type;
     }
 
-    public function setAsError($msg)
+    public function setAsError()
     {
-        $this->setMsg($msg)
-            ->setIsSuccess(false)
-            ->setType(self::TYPE_ERROR);
+        $this->setType(self::TYPE_ERROR);
 
         return $this;
     }
 
-    public function setAsSuccess($msg)
+    public function setAsWarning()
+    {
+        $this->setType(self::TYPE_WARNING);
+
+        return $this;
+    }
+
+    public function setAsSuccess()
+    {
+        $this->setType(self::TYPE_SUCCESS);
+
+        return $this;
+    }
+
+    public function setMsgAsError($msg)
     {
         $this->setMsg($msg)
-            ->setIsSuccess(true)
-            ->setType(self::TYPE_SUCCESS);
+            ->setAsError();
+
+        return $this;
+    }
+
+    public function setMsgAsWarning($msg)
+    {
+        $this->setMsg($msg)
+            ->setAsWarning();
+
+        return $this;
+    }
+
+    public function setMsgAsSuccess($msg)
+    {
+        $this->setMsg($msg)
+            ->setAsSuccess();
 
         return $this;
     }
