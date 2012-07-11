@@ -31,12 +31,6 @@ services:
         class: %code_spotlight_application_tools.application.requirements_checker.class%
         arguments: [@code_spotlight_application_tools.application.event_dispatcher]
 
-    # Service
-    code_spotlight_application_tools.service.base:
-        abstract: true
-        class: %code_spotlight_application_tools.service.base.class%
-        arguments: [@service_container]
-
     # Controller
     code_spotlight_application_tools.controller.base:
         abstract: true

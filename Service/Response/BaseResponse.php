@@ -6,7 +6,7 @@
 
 namespace CodeSpotlight\Bundle\ApplicationToolsBundle\Service\Response;
 
-use Symfony\Component\Form\Form;
+use Symfony\Component\Form\FormInterface;
 use Symfony\Component\HttpFoundation\Response;
 
 class BaseResponse extends Response
@@ -16,10 +16,12 @@ class BaseResponse extends Response
     const TYPE_ERROR = 'ERROR';
 
     protected $isSuccess = true;
-    protected $msg = 'Action was executed successfully!';
+    protected $msg = '';
     protected $type = self::TYPE_SUCCESS;
     protected $form;
+    protected $data = array();
     protected $exception;
+    protected $totalRows = 0;
 
 
     public function setIsSuccess($isSuccess)
@@ -113,7 +115,7 @@ class BaseResponse extends Response
         return $this;
     }
 
-    public function setForm(Form $form = null)
+    public function setForm(FormInterface $form = null)
     {
         $this->form = $form;
 
@@ -125,9 +127,25 @@ class BaseResponse extends Response
         return $this->form;
     }
 
+    public function setData(array $data)
+    {
+        $this->data = $data;
+
+        return $this;
+    }
+
+    public function getData()
+    {
+        return $this->data;
+    }
+
     public function setException(\Exception $exception)
     {
         $this->exception = $exception;
+
+        if ($this->isSuccess()) {
+            $this->setAsError();
+        }
 
         return $this;
     }
@@ -135,5 +153,28 @@ class BaseResponse extends Response
     public function getException()
     {
         return $this->exception;
+    }
+
+    public function setTotalRows($totalRows)
+    {
+        $this->totalRows = $totalRows;
+
+        return $this;
+    }
+
+    public function getTotalRows()
+    {
+        return $this->totalRows;
+    }
+
+    public function toArray()
+    {
+        return array(
+            'success'       => $this->isSuccess(),
+            'type'          => $this->getType(),
+            'msg'           => $this->getMsg(),
+            'totalRows'     => $this->getTotalRows(),
+            'data'          => $this->getData()
+        );
     }
 }
