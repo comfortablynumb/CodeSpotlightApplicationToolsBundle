@@ -12,6 +12,7 @@ parameters:
 
     # Service
     code_spotlight_application_tools.service.base.class: CodeSpotlight\Bundle\ApplicationToolsBundle\Service\AbstractService
+
 services:
     code_spotlight_application_tools.application.event_dispatcher:
         class: %code_spotlight_application_tools.application.event_dispatcher.class%

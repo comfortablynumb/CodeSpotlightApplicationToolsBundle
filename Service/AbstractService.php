@@ -10,6 +10,8 @@ use Doctrine\Common\Persistence\ObjectManager;
 use CodeSpotlight\Bundle\ApplicationToolsBundle\Exception\InvalidFormException;
 use CodeSpotlight\Bundle\ApplicationToolsBundle\Service\Response\BaseResponse;
 use CodeSpotlight\Bundle\ApplicationToolsBundle\Service\DataBag\DataBag;
+use CodeSpotlight\Bundle\ApplicationToolsBundle\Service\PersistenceManager\PersistenceManagerInterface;
+use CodeSpotlight\Bundle\ApplicationToolsBundle\Service\PersistenceManager\ORM\PersistenceManager;
 
 abstract class AbstractService
 {
@@ -28,20 +30,21 @@ abstract class AbstractService
     /** @var $response \CodeSpotlight\Bundle\ApplicationToolsBundle\Service\Response\BaseResponse */
     protected $response;
 
-    /** @var $objectManager \Doctrine\Common\Persistence\ObjectManager */
-    protected $objectManager;
+    /** @var $persistenceManager \CodeSpotlight\Bundle\ApplicationToolsBundle\Service\PersistenceManager\PersistenceManagerInterface */
+    protected $persistenceManager;
 
-    /** @var $repository \Doctrine\Common\Persistence\ObjectRepository */
-    protected $repository;
+    /** @var string Delimiter used for values embedded in a string */
+    protected $valueDelimiter = ',';
     
-    public function __construct(ContainerInterface $container, $objectManagerId, $objectClass)
+    public function __construct(ContainerInterface $container, $objectManagerId, $objectClass, $persistenceManager = null)
     {
         $this->container = $container;
         $this->formFactory = $this->container->get('form.factory');
+        $this->setPersistenceManager(!$persistenceManager ?
+            new PersistenceManager($this->container->get($objectManagerId), $objectClass) :
+            $persistenceManager);
 
-        $this->setObjectManager($this->container->get($objectManagerId));
         $this->setObjectClass($objectClass);
-        $this->setRepository($this->getObjectManager()->getRepository($objectClass));
     }
 
     public function getHandleExceptions()
@@ -63,6 +66,7 @@ abstract class AbstractService
         try {
             $this->initialize($config);
 
+            $pm = $this->getPersistenceManager();
             $dataBag = $this->getData();
             $response = $this->getResponse();
             $result = $this->preGet($dataBag);
@@ -72,10 +76,10 @@ abstract class AbstractService
             }
 
             // Count query
-            $response->setTotalRows($this->getRepository()->get($dataBag, true));
+            $response->setTotalRows($pm->get($dataBag, true));
 
             // Normal query
-            $response->setData($this->getRepository()->get($dataBag));
+            $response->setData($pm->get($dataBag));
 
             $this->postGet($dataBag);
 
@@ -114,7 +118,7 @@ abstract class AbstractService
             $resultData = $this->form->getData();
 
             if (is_object($resultData)) {
-                $this->getRepository()->save($resultData);
+                $this->getPersistenceManager()->save($resultData);
             }
 
             $this->postCreate($dataBag);
@@ -134,8 +138,8 @@ abstract class AbstractService
         $handleExceptions = $handleExceptions === null ? $this->handleExceptions : $handleExceptions;
 
         try {
-            $repository = $this->getRepository();
-            $object = $repository->find($id);
+            $pm = $this->getPersistenceManager();
+            $object = $pm->find($id);
 
             $this->initialize($data, $object);
 
@@ -157,7 +161,7 @@ abstract class AbstractService
             $resultData = $this->form->getData();
 
             if (is_object($resultData)) {
-                $repository->save($resultData);
+                $pm->save($resultData);
             }
 
             $this->postUpdate($dataBag);
@@ -179,8 +183,8 @@ abstract class AbstractService
         try {
             $this->initialize();
 
-            $repository = $this->getRepository();
-            $object = $repository->find($id);
+            $pm = $this->getPersistenceManager();
+            $object = $pm->find($id);
             $response = $this->getResponse();
             $result = $this->preDelete($object);
 
@@ -188,7 +192,7 @@ abstract class AbstractService
                 return $result;
             }
 
-            $repository->delete($object);
+            $pm->delete($object);
 
             $this->postDelete($id);
 
@@ -231,7 +235,7 @@ abstract class AbstractService
 
     public function transactional(\Closure $closure, $handleExceptions = null)
     {
-        $om = $this->getObjectManager();
+        $om = $this->getPersistenceManager()->getObjectManager();
         $conn = $om->getConnection();
         $handleExceptions = $handleExceptions === null ? $this->handleExceptions : $handleExceptions;
 
@@ -256,8 +260,6 @@ abstract class AbstractService
             } else {
                 throw $e;
             }
-
-            return $this->getResponse();
         }
     }
 
@@ -278,6 +280,10 @@ abstract class AbstractService
     {
     }
 
+    public function preBind(DataBag $data = null, FormInterface $form = null)
+    {
+    }
+
     // "Post" methods
     public function postGet(DataBag $config)
     {
@@ -292,6 +298,10 @@ abstract class AbstractService
     }
 
     public function postDelete($id)
+    {
+    }
+
+    public function postBind(array $data = null, FormInterface $form = null)
     {
     }
 
@@ -313,20 +323,19 @@ abstract class AbstractService
         return $this;
     }
 
-    public function bindDataToForm($data, $form = null)
+    public function bindDataToForm(DataBag $data, FormInterface $form = null)
     {
-        $bindMethod = 'bind';
         $form = $form === null ? $this->getForm() : $form;
 
-        if (is_object($data)) {
-            if ($data instanceof Request) {
-                $bindMethod = 'bindRequest';
-            } else if ($data instanceof DataBag) {
-                $data = $data->all();
-            }
+        $this->preBind($data, $form);
+
+        if (is_object($data) && $data instanceof DataBag) {
+            $data = $data->all();
         }
         
-        $form->$bindMethod($data);
+        $form->bind($data);
+
+        $this->postBind($data, $form);
 
         return $this;
     }
@@ -354,15 +363,24 @@ abstract class AbstractService
     {
         $msg = 'Global Errors: <br /><br />';
 
-        foreach ($this->getForm()->getErrors() as $error) {
+        /** @var $form FormInterface */
+        $form = $this->getForm();
+
+        foreach ($form->getErrors() as $error) {
             $msg .= '- '.$error->getMessageTemplate().'<br />&nbsp;&nbsp;&nbsp;. Details: '.implode(', ', $error->getMessageParameters());
         }
 
         $msg .= '<br /><br />Field Errors: <br /><br />';
 
-        foreach ($this->getForm()->getChildren() as $children) {
-            foreach ($children->getErrors() as $error) {
+        foreach ($form->getChildren() as $child) {
+            foreach ($child->getErrors() as $property => $error) {
                 $msg .= '- '.$error->getMessageTemplate().'<br />';
+            }
+
+            foreach ($child->getChildren() as $child2) {
+                foreach ($child2->getErrors() as $property => $error) {
+                    $msg .= '['.$child2->getPropertyPath().'] - '.$error->getMessageTemplate().'<br />';
+                }
             }
         }
 
@@ -414,30 +432,6 @@ abstract class AbstractService
         return $this->response;
     }
 
-    public function setObjectManager(ObjectManager $objectManager)
-    {
-        $this->objectManager = $objectManager;
-
-        return $this;
-    }
-
-    public function getObjectManager()
-    {
-        return $this->objectManager;
-    }
-
-    public function setRepository(ObjectRepository $repository)
-    {
-        $this->repository = $repository;
-
-        return $this;
-    }
-
-    public function getRepository()
-    {
-        return $this->repository;
-    }
-
     public function setObjectClass($objectClass)
     {
         $this->objectClass = $objectClass;
@@ -448,6 +442,32 @@ abstract class AbstractService
     public function getObjectClass()
     {
         return $this->objectClass;
+    }
+
+    public function setValueDelimiter($delimiter)
+    {
+        $this->valueDelimiter = $delimiter;
+    }
+
+    public function getValueDelimiter()
+    {
+        return $this->valueDelimiter;
+    }
+
+    /**
+     * @param \CodeSpotlight\Bundle\ApplicationToolsBundle\Service\PersistenceManager\PersistenceManagerInterface $persistenceManager
+     */
+    public function setPersistenceManager(PersistenceManagerInterface $persistenceManager)
+    {
+        $this->persistenceManager = $persistenceManager;
+    }
+
+    /**
+     * @return \CodeSpotlight\Bundle\ApplicationToolsBundle\Service\PersistenceManager\PersistenceManagerInterface
+     */
+    public function getPersistenceManager()
+    {
+        return $this->persistenceManager;
     }
 
     public function createObjectInstance()
