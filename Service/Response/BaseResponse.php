@@ -1,9 +1,5 @@
 <?php
 
-/**
- * Created by Gustavo Falco <comfortablynumb84@gmail.com>
- */
-
 namespace CodeSpotlight\Bundle\ApplicationToolsBundle\Service\Response;
 
 use Symfony\Component\Form\FormInterface;
@@ -22,7 +18,12 @@ class BaseResponse extends Response
     protected $data = array();
     protected $exception;
     protected $totalRows = 0;
-
+    protected $dataIndex = 'data';
+    protected $successIndex = 'success';
+    protected $msgIndex = 'msg';
+    protected $typeIndex = 'type';
+    protected $totalRowsIndex = 'totalRows';
+    protected $returnOnlyData = false;
 
     public function setIsSuccess($isSuccess)
     {
@@ -127,7 +128,7 @@ class BaseResponse extends Response
         return $this->form;
     }
 
-    public function setData(array $data)
+    public function setData($data)
     {
         $this->data = $data;
 
@@ -167,14 +168,86 @@ class BaseResponse extends Response
         return $this->totalRows;
     }
 
+    public function setDataIndex($dataIndex)
+    {
+        $this->dataIndex = $dataIndex;
+
+        return $this;
+    }
+
+    public function getDataIndex()
+    {
+        return $this->dataIndex;
+    }
+
+    public function setMsgIndex($msgIndex)
+    {
+        $this->msgIndex = $msgIndex;
+
+        return $this;
+    }
+
+    public function getMsgIndex()
+    {
+        return $this->msgIndex;
+    }
+
+    public function setSuccessIndex($successIndex)
+    {
+        $this->successIndex = $successIndex;
+
+        return $this;
+    }
+
+    public function getSuccessIndex()
+    {
+        return $this->successIndex;
+    }
+
+    public function setTotalRowsIndex($totalRowsIndex)
+    {
+        $this->totalRowsIndex = $totalRowsIndex;
+
+        return $this;
+    }
+
+    public function getTotalRowsIndex()
+    {
+        return $this->totalRowsIndex;
+    }
+
+    public function setTypeIndex($typeIndex)
+    {
+        $this->typeIndex = $typeIndex;
+
+        return $this;
+    }
+
+    public function getTypeIndex()
+    {
+        return $this->typeIndex;
+    }
+
+    public function setReturnOnlyData($bool)
+    {
+        $this->returnOnlyData = $bool;
+
+        return $this;
+    }
+
+    public function getReturnOnlyData()
+    {
+        return $this->returnOnlyData;
+    }
+
     public function toArray()
     {
-        return array(
-            'success'       => $this->isSuccess(),
-            'type'          => $this->getType(),
-            'msg'           => $this->getMsg(),
-            'totalRows'     => $this->getTotalRows(),
-            'data'          => $this->getData()
+        return $this->returnOnlyData ? $this->getData() : array(
+            $this->successIndex       => $this->isSuccess(),
+            $this->typeIndex          => $this->getType(),
+            $this->msgIndex           => $this->getMsg(),
+            $this->totalRowsIndex     => $this->getTotalRows(),
+            $this->dataIndex          => $this->getData()
         );
     }
 }

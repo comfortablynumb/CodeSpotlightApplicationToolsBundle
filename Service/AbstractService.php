@@ -36,13 +36,13 @@ abstract class AbstractService
     /** @var string Delimiter used for values embedded in a string */
     protected $valueDelimiter = ',';
     
-    public function __construct(ContainerInterface $container, $objectManagerId, $objectClass, $persistenceManager = null)
+    public function __construct(ContainerInterface $container, $objectManagerServiceId, $objectClass, $persistenceManagerServiceId = null)
     {
         $this->container = $container;
         $this->formFactory = $this->container->get('form.factory');
-        $this->setPersistenceManager(!$persistenceManager ?
-            new PersistenceManager($this->container->get($objectManagerId), $objectClass) :
-            $persistenceManager);
+        $this->setPersistenceManager($persistenceManagerServiceId ?
+            $this->container->get($persistenceManagerServiceId) :
+            new PersistenceManager($this->container->get($objectManagerServiceId), $objectClass));
 
         $this->setObjectClass($objectClass);
     }
@@ -264,6 +264,11 @@ abstract class AbstractService
     }
 
     // "Pre" methods
+    public function preInitialize($data = null, $object = null)
+    {
+        return $data;
+    }
+
     public function preGet(DataBag $config)
     {
     }
@@ -285,6 +290,11 @@ abstract class AbstractService
     }
 
     // "Post" methods
+    public function postInitialize(DataBag $data, $object = null)
+    {
+
+    }
+
     public function postGet(DataBag $config)
     {
     }
@@ -303,10 +313,13 @@ abstract class AbstractService
 
     public function postBind(array $data = null, FormInterface $form = null)
     {
+        return $data;
     }
 
     public function initialize($data = null, $object = null)
     {
+        $data = $this->preInitialize($data, $object);
+
         $response = $this->createResponse();
         $this->setResponse($response);
 
@@ -315,12 +328,27 @@ abstract class AbstractService
 
         if ($data) {
             $this->getLogger()->addInfo('[Data Received by Service]', array('data' => $data));
-            $this->setData($data);
+
+            $data = is_object($data) && $data instanceof Request ? $data->get($this->form->getName()) :
+                $data;
+        } else {
+            $data = array();
         }
+
+        $data = new DataBag($data);
+
+        $this->setData($data);
+        $this->parseData($this->getData());
 
         $response->setForm($form);
 
+        $this->postInitialize($data, $object);
+
         return $this;
+    }
+
+    protected function parseData(DataBag $data)
+    {
     }
 
     public function bindDataToForm(DataBag $data, FormInterface $form = null)
@@ -344,16 +372,16 @@ abstract class AbstractService
     {
         $this->getLogger()->addError($e);
 
+        $response = $this->getResponse();
+        $msg = '';
+
         if ($e instanceof InvalidFormException) {
-            $msg = $this->handleFormException($e);
+            $this->handleFormException($e);
         } else {
-            $msg = $e->getMessage();
+            $response->setMsgAsError($e->getMessage());
         }
 
-        $response = $this->getResponse();
-
-        $response->setMsgAsError($msg)
-            ->setForm($this->getForm())
+        $response->setForm($this->getForm())
             ->setException($e);
 
         return $response;
@@ -365,16 +393,17 @@ abstract class AbstractService
 
         /** @var $form FormInterface */
         $form = $this->getForm();
+        $formErrors = $form->getErrors();
 
-        foreach ($form->getErrors() as $error) {
-            $msg .= '- '.$error->getMessageTemplate().'<br />&nbsp;&nbsp;&nbsp;. Details: '.implode(', ', $error->getMessageParameters());
+        foreach ($formErrors as $error) {
+            $msg .= '['.$form->getPropertyPath().'] - '.$error->getMessageTemplate().'<br />';
         }
 
         $msg .= '<br /><br />Field Errors: <br /><br />';
 
         foreach ($form->getChildren() as $child) {
             foreach ($child->getErrors() as $property => $error) {
-                $msg .= '- '.$error->getMessageTemplate().'<br />';
+                $msg .= '['.$child->getPropertyPath().'] - '.$error->getMessageTemplate().'<br />';
             }
 
             foreach ($child->getChildren() as $child2) {
@@ -384,7 +413,10 @@ abstract class AbstractService
             }
         }
 
-        return $msg;
+        $response = $this->getResponse();
+
+        $response->setMsgAsError($msg);
+        $response->setData($formErrors);
     }
 
     public function createForm($object = null)
@@ -394,11 +426,9 @@ abstract class AbstractService
         return $this->createObjectFormType($object);
     }
 
-    public function setData($data)
+    public function setData(DataBag $data)
     {
-        $data = is_object($data) && $data instanceof Request ? $data->get($this->form->getName()) :
-            $data;
-        $this->data = new DataBag($data);
+        $this->data = $data;
 
         return $this;
     }
