@@ -5,36 +5,56 @@ namespace CodeSpotlight\Bundle\ApplicationToolsBundle\Service;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\Form\FormInterface;
-use Doctrine\Common\Persistence\ObjectRepository;
 use Doctrine\Common\Persistence\ObjectManager;
+use Gedmo\Tree\Entity\Repository\NestedTreeRepository;
+use Gedmo\Tool\Wrapper\EntityWrapper;
+
 use CodeSpotlight\Bundle\ApplicationToolsBundle\Exception\InvalidFormException;
 use CodeSpotlight\Bundle\ApplicationToolsBundle\Service\Response\BaseResponse;
 use CodeSpotlight\Bundle\ApplicationToolsBundle\Service\DataBag\DataBag;
 use CodeSpotlight\Bundle\ApplicationToolsBundle\Service\PersistenceManager\PersistenceManagerInterface;
 use CodeSpotlight\Bundle\ApplicationToolsBundle\Service\PersistenceManager\ORM\PersistenceManager;
+use CodeSpotlight\Bundle\ApplicationToolsBundle\Exception\EntityNotFoundException;
+use CodeSpotlight\Bundle\ApplicationToolsBundle\Exception\InvalidArgumentException;
 
 abstract class AbstractService
 {
+    const ACTION_CREATE = 'create';
+    const ACTION_UPDATE = 'update';
+    const ACTION_DELETE = 'delete';
+    const ACTION_RETRIEVE = 'retrieve';
+
     protected $container;
     protected $formFactory;
 
-    /** @var $form \Symfony\Component\Form\FormInterface */
+    /** @var \Symfony\Component\Form\FormInterface */
     protected $form;
     protected $originalData;
     protected $data;
+
+    /** @var bool */
     protected $handleExceptions = true;
 
-    /** @var string Entity (or Document) class that will be handled by this service */
+    /** @var string - Entity (or Document) class that will be handled by this service */
     protected $objectClass;
 
-    /** @var $response \CodeSpotlight\Bundle\ApplicationToolsBundle\Service\Response\BaseResponse */
+    /** @var \CodeSpotlight\Bundle\ApplicationToolsBundle\Service\Response\BaseResponse */
     protected $response;
 
-    /** @var $persistenceManager \CodeSpotlight\Bundle\ApplicationToolsBundle\Service\PersistenceManager\PersistenceManagerInterface */
+    /** @var \CodeSpotlight\Bundle\ApplicationToolsBundle\Service\PersistenceManager\PersistenceManagerInterface */
     protected $persistenceManager;
 
-    /** @var string Delimiter used for values embedded in a string */
+    /** @var string - Delimiter used for values embedded in a string */
     protected $valueDelimiter = ',';
+
+    /** @var array - Holds the listeners from Gedmo's extensions registered */
+    protected $gedmoListeners = array();
+
+    /** @var \CodeSpotlight\Bundle\ApplicationToolsBundle\Service\Databag\DataBag */
+    private $options;
+
+    /** @var string - Holds the current action the service is performing */
+    private $currentAction = null;
     
     public function __construct(ContainerInterface $container, $objectManagerServiceId, $objectClass, $persistenceManagerServiceId = null)
     {
@@ -45,6 +65,15 @@ abstract class AbstractService
             new PersistenceManager($this->container->get($objectManagerServiceId), $objectClass));
 
         $this->setObjectClass($objectClass);
+        $this->setOptions($this->getDefaultOptions());
+    }
+
+    public function getDefaultOptions()
+    {
+        return array(
+            // Allows partial updates on an entity
+            'partial'           => false
+        );
     }
 
     public function getHandleExceptions()
@@ -63,10 +92,11 @@ abstract class AbstractService
     {
         $handleExceptions = $handleExceptions === null ? $this->handleExceptions : $handleExceptions;
 
-        try {
-            $this->initialize($config);
+        $this->setCurrentAction(self::ACTION_RETRIEVE);
 
-            $pm = $this->getPersistenceManager();
+        try {
+            $this->initialize($config, null, false);
+
             $dataBag = $this->getData();
             $response = $this->getResponse();
             $result = $this->preGet($dataBag);
@@ -76,15 +106,19 @@ abstract class AbstractService
             }
 
             // Count query
-            $response->setTotalRows($pm->get($dataBag, true));
+            $response->setTotalRows($this->getSearchTotalRowsResult($dataBag));
 
             // Normal query
-            $response->setData($pm->get($dataBag));
+            $response->setData($this->getSearchResults($dataBag));
 
             $this->postGet($dataBag);
 
+            $this->setCurrentAction(null);
+
             return $response;
         } catch (\Exception $e) {
+            $this->setCurrentAction(null);
+
             if ($handleExceptions) {
                 return $this->handleException($e);
             } else {
@@ -93,9 +127,26 @@ abstract class AbstractService
         }
     }
 
+    public function getById($id)
+    {
+        return $this->getPersistenceManager()->find($id);
+    }
+
+    public function getSearchTotalRowsResult(DataBag $dataBag)
+    {
+        return $this->getPersistenceManager()->get($dataBag, true);
+    }
+
+    public function getSearchResults(DataBag $dataBag)
+    {
+        return $this->getPersistenceManager()->get($dataBag);
+    }
+
     public function create(array $data, $handleExceptions = null)
     {
         $handleExceptions = $handleExceptions === null ? $this->handleExceptions : $handleExceptions;
+
+        $this->setCurrentAction(self::ACTION_CREATE);
 
         try {
             $this->initialize($data);
@@ -118,13 +169,19 @@ abstract class AbstractService
             $resultData = $this->form->getData();
 
             if (is_object($resultData)) {
-                $this->getPersistenceManager()->save($resultData);
+                $this->save($resultData);
             }
 
-            $this->postCreate($dataBag);
+            $response->setData($this->toArray($resultData));
+
+            $this->postCreate($dataBag, $resultData);
+
+            $this->setCurrentAction(null);
 
             return $response;
         } catch (\Exception $e) {
+            $this->setCurrentAction(null);
+
             if ($handleExceptions) {
                 return $this->handleException($e);
             } else {
@@ -137,15 +194,32 @@ abstract class AbstractService
     {
         $handleExceptions = $handleExceptions === null ? $this->handleExceptions : $handleExceptions;
 
+        $this->setCurrentAction(self::ACTION_UPDATE);
+
         try {
             $pm = $this->getPersistenceManager();
             $object = $pm->find($id);
+            $options = $this->getOptions();
+
+            if ($options->get('partial', false)) {
+                $tmp = $this->get(array('filter' => array(
+                    array('id'      => $id)
+                )));
+                $tmp = $tmp->getData();
+                $tmp = $tmp[0];
+
+                $data = array_merge($tmp, $data);
+
+                // We need this so we ensure all types of data are serialized correctly (DateTimes, etc).
+                $data = $this->toArray($data);
+            }
 
             $this->initialize($data, $object);
 
             $dataBag = $this->getData();
+
             $response = $this->getResponse();
-            $result = $this->preUpdate($dataBag);
+            $result = $this->preUpdate($dataBag, $object);
 
             if (is_object($result) && $result instanceof BaseResponse) {
                 return $result;
@@ -161,13 +235,19 @@ abstract class AbstractService
             $resultData = $this->form->getData();
 
             if (is_object($resultData)) {
-                $pm->save($resultData);
+                $this->save($resultData);
             }
 
-            $this->postUpdate($dataBag);
+            $response->setData($this->toArray($resultData));
+
+            $this->postUpdate($dataBag, $resultData);
+
+            $this->setCurrentAction(null);
 
             return $response;
         } catch (\Exception $e) {
+            $this->setCurrentAction(null);
+
             if ($handleExceptions) {
                 return $this->handleException($e);
             } else {
@@ -180,11 +260,14 @@ abstract class AbstractService
     {
         $handleExceptions = $handleExceptions === null ? $this->handleExceptions : $handleExceptions;
 
-        try {
-            $this->initialize();
+        $this->setCurrentAction(self::ACTION_DELETE);
 
+        try {
             $pm = $this->getPersistenceManager();
             $object = $pm->find($id);
+
+            $this->initialize();
+
             $response = $this->getResponse();
             $result = $this->preDelete($object);
 
@@ -195,6 +278,94 @@ abstract class AbstractService
             $pm->delete($object);
 
             $this->postDelete($id);
+
+            $this->setCurrentAction(null);
+
+            return $response;
+        } catch (\Exception $e) {
+            $this->setCurrentAction(null);
+
+            if ($handleExceptions) {
+                return $this->handleException($e);
+            } else {
+                throw $e;
+            }
+        }
+    }
+
+    // Exclusive Tree Methods
+    public function moveNodeUp($nodeId, $howManyPositions, $newParent = false)
+    {
+        return $this->moveNode('Up', $nodeId, $howManyPositions, $newParent);
+    }
+
+    public function moveNodeDown($nodeId, $howManyPositions, $newParent = false)
+    {
+        return $this->moveNode('Down', $nodeId, $howManyPositions, $newParent);
+    }
+
+    public function moveNode($where, $nodeId, $howManyPositions, $newParent = false, $handleExceptions = null)
+    {
+        $handleExceptions = $handleExceptions === null ? $this->handleExceptions : $handleExceptions;
+
+        try {
+            $repo = $this->getRepository();
+
+            if (!($repo instanceof NestedTreeRepository)) {
+                throw new \RuntimeException('To be able to move nodes, your repository must extend "Gedmo\\Tree\\Entity\\Repository\\NestedTreeRepository".');
+            }
+
+            if ($where !== 'Up' && $where !== 'Down') {
+                throw new \RuntimeException('Parameter $where must be "Down" or "Up".');
+            }
+
+            $this->initialize();
+
+            $node = $repo->find($nodeId);
+
+            if (!$node) {
+                throw new \RuntimeException(sprintf('Node with ID "%s" does not exist.', $node));
+            }
+
+            $this->preMoveNode($node, $where, $howManyPositions, $newParent);
+
+            // First we change the parent if needed
+            $pm = $this->getPersistenceManager();
+
+            if ($newParent) {
+                if ($newParent !== 'ROOT') {
+                    $parentNode = $repo->find($newParent);
+
+                    if (!$parentNode) {
+                        throw new \RuntimeException(sprintf('Parent with ID "%s" does not exist.', $newParent));
+                    }
+
+                    $repo->persistAsFirstChildOf($node, $parentNode);
+
+                    $where = 'Up';
+                } else {
+                    $config = $this->getGedmoTreeListener()->getConfiguration($pm->getObjectManager(), $this->objectClass);
+                    $wrapped = new EntityWrapper($node, $pm->getObjectManager());
+                    $wrapped->setPropertyValue($config['parent'], null);
+
+                    $pm->persist($node);
+                }
+
+                $pm->flush();
+                $pm->refresh($node);
+            }
+
+            if ($newParent !== 'ROOT') {
+                $method = 'move'.$where;
+
+                $result = $repo->$method($node, $howManyPositions);
+            }
+
+            $response = $this->getResponse();
+
+            $response->setMsgAsSuccess('Node has been moved successfully.');
+
+            $this->postMoveNode($node, $where, $howManyPositions, $newParent);
 
             return $response;
         } catch (\Exception $e) {
@@ -215,12 +386,12 @@ abstract class AbstractService
         });
     }
 
-    public function updateTransactional($data, $id)
+    public function updateTransactional($data, $id, $partial = false)
     {
         $service = $this;
 
-        return $this->transactional(function() use ($service, $data, $id) {
-            return $service->update($data, $id, false);
+        return $this->transactional(function() use ($service, $data, $id, $partial) {
+            return $service->update($data, $id, $partial, false);
         });
     }
 
@@ -230,6 +401,47 @@ abstract class AbstractService
 
         return $this->transactional(function() use ($service, $id) {
             return $service->delete($id, false);
+        });
+    }
+
+    public function save($object)
+    {
+        $pm = $this->getPersistenceManager();
+
+        $pm->persist($object);
+
+        $this->postPersist($object);
+
+        $pm->save($object);
+
+        $this->postFlush($object);
+    }
+
+    // Tree Specific Methods
+    public function moveNodeUpTransactional($nodeId, $howManyPositions, $newParent = false)
+    {
+        $service = $this;
+
+        return $this->transactional(function() use ($service, $nodeId, $howManyPositions, $newParent) {
+            return $service->moveNodeUp($nodeId, $howManyPositions, $newParent);
+        });
+    }
+
+    public function moveNodeDownTransactional($nodeId, $howManyPositions, $newParent = false)
+    {
+        $service = $this;
+
+        return $this->transactional(function() use ($service, $nodeId, $howManyPositions, $newParent) {
+            return $service->moveNodeDown($nodeId, $howManyPositions, $newParent);
+        });
+    }
+
+    public function moveNodeTransactional($where, $nodeId, $howManyPositions, $newParent = false)
+    {
+        $service = $this;
+
+        return $this->transactional(function() use ($service, $where, $nodeId, $howManyPositions, $newParent) {
+            return $service->moveNode($where, $nodeId, $howManyPositions, $newParent);
         });
     }
 
@@ -245,7 +457,11 @@ abstract class AbstractService
             $response = $closure();
 
             if ($response->isSuccess()) {
+                $this->preCommit();
+
                 $conn->commit();
+
+                $this->postCommit();
             } else {
                 throw $response->getException();
             }
@@ -277,7 +493,7 @@ abstract class AbstractService
     {
     }
 
-    public function preUpdate(DataBag $data)
+    public function preUpdate(DataBag $data, $object)
     {
     }
 
@@ -286,6 +502,14 @@ abstract class AbstractService
     }
 
     public function preBind(DataBag $data = null, FormInterface $form = null)
+    {
+    }
+
+    public function preCommit()
+    {
+    }
+
+    public function preMoveNode($node, $where, $howManyPositions, $newParent)
     {
     }
 
@@ -299,11 +523,11 @@ abstract class AbstractService
     {
     }
 
-    public function postCreate(DataBag $data)
+    public function postCreate(DataBag $data, $result)
     {
     }
 
-    public function postUpdate(DataBag $data)
+    public function postUpdate(DataBag $data, $result)
     {
     }
 
@@ -316,15 +540,34 @@ abstract class AbstractService
         return $data;
     }
 
-    public function initialize($data = null, $object = null)
+    public function postPersist($object)
+    {
+    }
+
+    public function postCommit()
+    {
+    }
+
+    public function postFlush($object)
+    {
+    }
+
+    public function postMoveNode($node, $where, $howManyPositions, $newParent)
+    {
+    }
+
+    public function initialize($data = null, $object = null, $createForm = true)
     {
         $data = $this->preInitialize($data, $object);
 
         $response = $this->createResponse();
         $this->setResponse($response);
 
-        $form = $this->createForm($object);
-        $this->setForm($form);
+        if ($createForm) {
+            $form = $this->createForm($object);
+            $this->setForm($form);
+            $response->setForm($form);
+        }
 
         if ($data) {
             $this->getLogger()->addInfo('[Data Received by Service]', array('data' => $data));
@@ -335,16 +578,34 @@ abstract class AbstractService
             $data = array();
         }
 
+        $options = $this->getOptions()->all();
+        $requestOptions = $this->getRequest()->query->all();
+        $options = array_merge($options, $requestOptions);
+
+        if ($this->getCurrentAction() === self::ACTION_RETRIEVE) {
+            $data = array_merge($data, $options);
+        }
+
+        // We don't allow sensitive PersistenceManager options coming from the request for now
+        unset($data['addSelect']);
+        unset($data['join']);
+
+        $this->setOptions($options);
+
         $data = new DataBag($data);
 
         $this->setData($data);
         $this->parseData($this->getData());
-
-        $response->setForm($form);
-
         $this->postInitialize($data, $object);
 
         return $this;
+    }
+
+    public function validateField($field, array $config)
+    {
+        if (!is_string($field) || empty($field)) {
+            throw new InvalidArgumentException('The "field" is mandatory.');
+        }
     }
 
     protected function parseData(DataBag $data)
@@ -360,7 +621,17 @@ abstract class AbstractService
         if (is_object($data) && $data instanceof DataBag) {
             $data = $data->all();
         }
-        
+
+        $files = array();
+
+        if (!$this->isCli()) {
+            $files = $this->getRequest()->files->all();
+        }
+
+        if (is_array($files) && !empty($files)) {
+            $data = array_replace_recursive($data, $files);
+        }
+
         $form->bind($data);
 
         $this->postBind($data, $form);
@@ -372,8 +643,11 @@ abstract class AbstractService
     {
         $this->getLogger()->addError($e);
 
-        $response = $this->getResponse();
-        $msg = '';
+        if (!($response = $this->getResponse())) {
+            $this->setResponse($this->createResponse());
+
+            $response = $this->getResponse();
+        }
 
         if ($e instanceof InvalidFormException) {
             $this->handleFormException($e);
@@ -389,29 +663,15 @@ abstract class AbstractService
 
     public function handleFormException(\Exception $e)
     {
-        $msg = 'Global Errors: <br /><br />';
-
         /** @var $form FormInterface */
         $form = $this->getForm();
         $formErrors = $form->getErrors();
 
-        foreach ($formErrors as $error) {
-            $msg .= '['.$form->getPropertyPath().'] - '.$error->getMessageTemplate().'<br />';
-        }
+        $this->getLogger()->addError($formErrors);
 
-        $msg .= '<br /><br />Field Errors: <br /><br />';
-
-        foreach ($form->getChildren() as $child) {
-            foreach ($child->getErrors() as $property => $error) {
-                $msg .= '['.$child->getPropertyPath().'] - '.$error->getMessageTemplate().'<br />';
-            }
-
-            foreach ($child->getChildren() as $child2) {
-                foreach ($child2->getErrors() as $property => $error) {
-                    $msg .= '['.$child2->getPropertyPath().'] - '.$error->getMessageTemplate().'<br />';
-                }
-            }
-        }
+        $msg = $this->getService('templating')->render('CodeSpotlightApplicationToolsBundle:Form:errors.html.twig', array(
+            'form'          => $this->getForm()->createView()
+        ));
 
         $response = $this->getResponse();
 
@@ -500,6 +760,11 @@ abstract class AbstractService
         return $this->persistenceManager;
     }
 
+    public function getRepository()
+    {
+        return $this->getPersistenceManager()->getRepository();
+    }
+
     public function createObjectInstance()
     {
         $class =  $this->getObjectClass();
@@ -519,9 +784,46 @@ abstract class AbstractService
         return new BaseResponse();
     }
 
+    protected function getGedmoTreeListener()
+    {
+        return $this->getGedmoListener('\\Gedmo\\Tree\\TreeListener');
+    }
+
+    protected function getGedmoListener($class)
+    {
+        $class = $class{0} === '\\' ? substr($class, 1) : $class;
+
+        if (!isset($this->gedmoListeners[$class])) {
+            $pm = $this->getPersistenceManager();
+
+            foreach ($pm->getEventManager()->getListeners() as $event => $listeners) {
+                foreach ($listeners as $hash => $listener) {
+                    $listenerClass = get_class($listener);
+
+                    if ($listenerClass === $class || is_subclass_of($class, $listenerClass)) {
+                        $this->gedmoListeners[$class] = $listener;
+
+                        break 2;
+                    }
+                }
+            }
+
+            if (!isset($this->gedmoListeners[$class])) {
+                throw new \RuntimeException(sprintf('Listener of class "%s" is not registered!', $class));
+            }
+        }
+
+        return $this->gedmoListeners[$class];
+    }
+
+    public function getEnvironment()
+    {
+        return $this->container->get('kernel')->getEnvironment();
+    }
+
     public function isDev()
     {
-        return $this->container->get('kernel')->getEnvironment() === 'dev';
+        return $this->getEnvironment() === 'dev';
     }
 
     public function getLogger()
@@ -529,5 +831,76 @@ abstract class AbstractService
         return $this->container->get('logger');
     }
 
+    public function toArray($entity)
+    {
+        return (array) json_decode($this->container->get('serializer')->serialize($entity, 'json'));
+    }
+
+    /**
+     * @param $options
+     * @return AbstractService
+     */
+    public function setOptions($options)
+    {
+        if (is_array($options)) {
+            $options = new DataBag($options);
+        }
+
+        $this->options = $options;
+
+        return $this;
+    }
+
+    /**
+     * @return \CodeSpotlight\Bundle\ApplicationToolsBundle\Service\DataBag\DataBag
+     */
+    public function getOptions()
+    {
+        if (is_array($this->options)) {
+            $this->options = new DataBag($this->options);
+        }
+
+        return $this->options;
+    }
+
     abstract function getObjectFormTypeClass();
+
+    /**
+     * @param string $currentAction
+     */
+    public function setCurrentAction($currentAction)
+    {
+        $this->currentAction = $currentAction;
+    }
+
+    /**
+     * @return string
+     */
+    public function getCurrentAction()
+    {
+        return $this->currentAction;
+    }
+
+    /**
+     * @return \Symfony\Component\HttpFoundation\Request
+     */
+    public function getRequest()
+    {
+        return $this->container->get('request');
+    }
+
+    public function getService($serviceId)
+    {
+        return $this->container->get($serviceId);
+    }
+
+    public function isCli()
+    {
+        return php_sapi_name() === 'cli';
+    }
+
+    public function isNew($object)
+    {
+        return $this->getPersistenceManager()->getPersistenceManager()->contains($object);
+    }
 }

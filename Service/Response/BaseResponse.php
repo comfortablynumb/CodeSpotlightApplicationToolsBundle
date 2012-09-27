@@ -16,6 +16,7 @@ class BaseResponse extends Response
     protected $type = self::TYPE_SUCCESS;
     protected $form;
     protected $data = array();
+    protected $additional = array();
     protected $exception;
     protected $totalRows = 0;
     protected $dataIndex = 'data';
@@ -23,6 +24,7 @@ class BaseResponse extends Response
     protected $msgIndex = 'msg';
     protected $typeIndex = 'type';
     protected $totalRowsIndex = 'totalRows';
+    protected $additionalIndex = 'additional';
     protected $returnOnlyData = false;
 
     public function setIsSuccess($isSuccess)
@@ -140,6 +142,18 @@ class BaseResponse extends Response
         return $this->data;
     }
 
+    public function setAdditional($additional)
+    {
+        $this->additional = $additional;
+
+        return $this;
+    }
+
+    public function getAdditional()
+    {
+        return $this->additional;
+    }
+
     public function setException(\Exception $exception)
     {
         $this->exception = $exception;
@@ -243,11 +257,12 @@ class BaseResponse extends Response
     public function toArray()
     {
         return $this->returnOnlyData ? $this->getData() : array(
-            $this->successIndex       => $this->isSuccess(),
-            $this->typeIndex          => $this->getType(),
-            $this->msgIndex           => $this->getMsg(),
-            $this->totalRowsIndex     => $this->getTotalRows(),
-            $this->dataIndex          => $this->getData()
+            $this->successIndex         => $this->isSuccess(),
+            $this->typeIndex            => $this->getType(),
+            $this->msgIndex             => $this->getMsg(),
+            $this->totalRowsIndex       => $this->getTotalRows(),
+            $this->dataIndex            => $this->getData(),
+            $this->additionalIndex      => $this->getAdditional()
         );
     }
 }

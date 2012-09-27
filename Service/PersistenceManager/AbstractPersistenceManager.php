@@ -6,8 +6,13 @@ use Doctrine\Common\Persistence\Mapping\ClassMetadata;
 use Doctrine\Common\Persistence\ObjectManager;
 use Doctrine\Common\Persistence\ObjectRepository;
 
+use CodeSpotlight\Bundle\ApplicationToolsBundle\Exception\EntityNotFoundException;
+
 abstract class AbstractPersistenceManager implements PersistenceManagerInterface
 {
+    const RETURN_AS_OBJECT = 'object';
+    const RETURN_AS_ARRAY = 'array';
+
     /** @var \Doctrine\Common\Persistence\ObjectManager */
     protected $objectManager;
 
@@ -18,11 +23,39 @@ abstract class AbstractPersistenceManager implements PersistenceManagerInterface
     protected $repository;
 
 
+    public function find($id)
+    {
+        $object = $this->getRepository()->find($id);
+
+        if (!$object) {
+            throw new EntityNotFoundException(sprintf('Entity with ID "%s" could not be found.',
+                $id
+            ));
+        }
+
+        return $object;
+    }
+
     public function save($object)
     {
         $this->objectManager->persist($object);
 
         $this->objectManager->flush();
+    }
+
+    public function persist($object)
+    {
+        $this->objectManager->persist($object);
+    }
+
+    public function flush()
+    {
+        $this->objectManager->flush();
+    }
+
+    public function refresh($object)
+    {
+        $this->objectManager->refresh($object);
     }
 
     public function delete($object)
@@ -80,4 +113,13 @@ abstract class AbstractPersistenceManager implements PersistenceManagerInterface
         return $this->repository;
     }
 
+    public function getOriginalObjectData($object)
+    {
+        return $this->objectManager->getUnitOfWork()->getOriginalEntityData($object);
+    }
+
+    public function getObjectIdentifier($object)
+    {
+        return $this->objectManager->getEntityIdentifier($object);
+    }
 }

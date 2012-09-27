@@ -8,6 +8,7 @@ namespace CodeSpotlight\Bundle\ApplicationToolsBundle\Controller;
 
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+use Symfony\Component\HttpFoundation\RedirectResponse;
 
 abstract class BaseController
 {
@@ -71,5 +72,10 @@ abstract class BaseController
     public function get($id)
     {
         return $this->container->get($id);
+    }
+
+    public function getParameter($id)
+    {
+        return $this->container->getParameter($id);
     }
 }

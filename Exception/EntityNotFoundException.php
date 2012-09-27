@@ -2,6 +2,6 @@
 
 namespace CodeSpotlight\Bundle\ApplicationToolsBundle\Exception;
 
-class InvalidArgumentException extends BaseException
+class EntityNotFoundException extends BaseException
 {
 }
